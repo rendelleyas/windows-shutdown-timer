@@ -193,7 +193,7 @@ function triggerCountdown(): void {
 
   if (!countdownWindow) {
     createCountdownWindow();
-    countdownWindow?.webContents.once('did-finish-load', () => {
+    countdownWindow!.webContents.once('did-finish-load', () => {
       countdownWindow?.webContents.send('start-countdown');
     });
   } else {
@@ -247,7 +247,25 @@ ipcMain.on('shutdown-now', () => {
   });
 });
 
+function registerStartupTask(): void {
+  if (!app.isPackaged) return;
+
+  const taskName = 'WindowsShutdownTimer';
+  const exePath = process.execPath;
+
+  exec(`schtasks /query /tn "${taskName}"`, (err) => {
+    if (!err) return; // already registered
+
+    // Wrap exe path in escaped quotes to handle spaces in install path
+    const cmd = `schtasks /create /tn "${taskName}" /tr "\\"${exePath}\\"" /sc onlogon /f`;
+    exec(cmd, (createErr) => {
+      if (createErr) console.error('Startup task registration failed:', createErr);
+    });
+  });
+}
+
 app.whenReady().then(() => {
+  registerStartupTask();
   createMainWindow();
   setupTray();
 
