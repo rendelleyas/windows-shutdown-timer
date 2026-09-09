@@ -2,6 +2,8 @@ import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage } from 'el
 import path from 'path';
 import { exec } from 'child_process';
 import { uIOhook } from 'uiohook-napi';
+import { hasAccount, getUsername, register, verify } from './auth';
+import { loadStore, saveStore } from './store';
 
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -109,7 +111,9 @@ function setupTray(): void {
   const iconPath = path.join(__dirname, '../../resources/tray-icon.png');
   const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip('Shutdown Timer — Inactive');
+  tray.setToolTip(
+    hasAccount() ? 'Shutdown Timer — Inactive' : 'Shutdown Timer — Not registered'
+  );
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
@@ -136,6 +140,13 @@ function setupTray(): void {
 }
 
 function startMonitoring(hours: number, minutes: number): void {
+  // Hard gate: an unregistered app never arms, never counts down, never shuts down.
+  if (!hasAccount()) {
+    console.warn('startMonitoring blocked: no account registered');
+    stopMonitoring();
+    return;
+  }
+
   stopMonitoring();
 
   idleThresholdMs = (hours * 60 + minutes) * 60 * 1000;
@@ -181,7 +192,9 @@ function stopMonitoring(): void {
   isMonitoring = false;
   isCountingDown = false;
   sendStatus('inactive', 0);
-  tray?.setToolTip('Shutdown Timer — Inactive');
+  tray?.setToolTip(
+    hasAccount() ? 'Shutdown Timer — Inactive' : 'Shutdown Timer — Not registered'
+  );
 }
 
 function triggerCountdown(): void {
@@ -233,15 +246,53 @@ function sendStatus(status: string, remaining: number, progress = 0, idleSeconds
   }
 }
 
-ipcMain.on('start-monitoring', (_e, { hours, minutes }: { hours: number; minutes: number }) => {
-  startMonitoring(hours, minutes);
-});
+ipcMain.handle('auth:status', () => ({
+  registered: hasAccount(),
+  username: getUsername(),
+}));
+
+ipcMain.handle(
+  'auth:register',
+  (_e, { username, password }: { username: string; password: string }) => {
+    const result = register(username, password);
+    if (result.ok) {
+      const { timer } = loadStore();
+      startMonitoring(timer.hours, timer.minutes);
+    }
+    return result;
+  }
+);
+
+ipcMain.handle('timer:get', () => loadStore().timer);
+
+ipcMain.handle(
+  'timer:update',
+  (_e, { password, hours, minutes }: { password: string; hours: number; minutes: number }) => {
+    if (!hasAccount()) return { ok: false, error: 'No account registered.' };
+    // Verify before mutating anything, so a bad password leaves the armed timer untouched.
+    if (!verify(password)) return { ok: false, error: 'Incorrect password.' };
+    if (hours === 0 && minutes === 0) return { ok: false, error: 'Timer must be greater than zero.' };
+
+    const store = loadStore();
+    saveStore({ ...store, timer: { hours, minutes } });
+    startMonitoring(hours, minutes);
+
+    return { ok: true };
+  }
+);
 
 ipcMain.on('countdown-cancel', () => cancelShutdown());
 
 ipcMain.on('countdown-restart', () => restartTimer());
 
 ipcMain.on('shutdown-now', () => {
+  // Defence in depth: the renderer should never reach here unregistered, but the
+  // actual shutdown must not be reachable on a renderer's word alone.
+  if (!hasAccount()) {
+    console.warn('shutdown-now blocked: no account registered');
+    return;
+  }
+
   exec('shutdown /s /t 0', (err) => {
     if (err) console.error('Shutdown failed:', err);
   });
@@ -278,7 +329,14 @@ app.whenReady().then(() => {
   }
 
   mainWindow!.webContents.once('did-finish-load', () => {
-    startMonitoring(0, 5);
+    // Arm from the persisted threshold only once an account exists; otherwise stay
+    // inactive and let the renderer show the registration screen.
+    if (hasAccount()) {
+      const { timer } = loadStore();
+      startMonitoring(timer.hours, timer.minutes);
+    } else {
+      sendStatus('inactive', 0);
+    }
   });
 });
 

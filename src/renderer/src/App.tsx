@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import RegisterScreen from './RegisterScreen';
+import CredentialPrompt from './CredentialPrompt';
 
 type Status = 'inactive' | 'monitoring' | 'countdown';
 
@@ -23,10 +25,13 @@ function formatIdle(seconds: number): string {
 export default function App(): React.JSX.Element {
   const [hours, setHours] = useState(0);
   const [minutes, setMinutes] = useState(5);
-  const [status, setStatus] = useState<Status>('monitoring');
+  const [status, setStatus] = useState<Status>('inactive');
   const [progress, setProgress] = useState(0);
   const [idleSeconds, setIdleSeconds] = useState(0);
   const [saved, setSaved] = useState(false);
+  // null = still resolving; gates the whole UI on the main process's answer
+  const [registered, setRegistered] = useState<boolean | null>(null);
+  const [promptOpen, setPromptOpen] = useState(false);
 
   useEffect(() => {
     api.onUpdateStatus(({ status: s, progress: p, idleSeconds: i }) => {
@@ -36,12 +41,38 @@ export default function App(): React.JSX.Element {
     });
   }, []);
 
-  const handleUpdate = (): void => {
-    if (hours === 0 && minutes === 0) return;
-    api.startMonitoring(hours, minutes);
+  useEffect(() => {
+    void (async () => {
+      const { registered: isRegistered } = await api.getAuthStatus();
+      if (isRegistered) await loadTimer();
+      setRegistered(isRegistered);
+    })();
+  }, []);
+
+  const loadTimer = async (): Promise<void> => {
+    const timer = await api.getTimer();
+    setHours(timer.hours);
+    setMinutes(timer.minutes);
+  };
+
+  const handleRegistered = async (): Promise<void> => {
+    await loadTimer();
+    setRegistered(true);
+  };
+
+  /** Returns an error message to show in the prompt, or null once applied. */
+  const handleConfirmUpdate = async (password: string): Promise<string | null> => {
+    const result = await api.updateTimer(password, hours, minutes);
+    if (!result.ok) return result.error ?? 'Update failed.';
+
+    setPromptOpen(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+    return null;
   };
+
+  if (registered === null) return <div className="app-root" />;
+  if (!registered) return <RegisterScreen onRegistered={() => void handleRegistered()} />;
 
   const dashOffset = CIRCUMFERENCE * (1 - progress);
   const color = ringColor(progress);
@@ -121,12 +152,20 @@ export default function App(): React.JSX.Element {
 
         <button
           className="btn-update"
-          onClick={handleUpdate}
+          onClick={() => setPromptOpen(true)}
           disabled={hours === 0 && minutes === 0}
         >
           {saved ? '✓ Applied' : 'Update Timer'}
         </button>
       </div>
+
+      {promptOpen && (
+        <CredentialPrompt
+          title="Confirm Timer Change"
+          onConfirm={handleConfirmUpdate}
+          onCancel={() => setPromptOpen(false)}
+        />
+      )}
     </div>
   );
 }

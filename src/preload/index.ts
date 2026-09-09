@@ -1,8 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('api', {
-  startMonitoring: (hours: number, minutes: number) =>
-    ipcRenderer.send('start-monitoring', { hours, minutes }),
+  // Account — registration and status
+  getAuthStatus: () => ipcRenderer.invoke('auth:status'),
+  register: (username: string, password: string) =>
+    ipcRenderer.invoke('auth:register', { username, password }),
+
+  // Timer — reads are open, every write requires the account password
+  getTimer: () => ipcRenderer.invoke('timer:get'),
+  updateTimer: (password: string, hours: number, minutes: number) =>
+    ipcRenderer.invoke('timer:update', { password, hours, minutes }),
+
   cancelShutdown: () => ipcRenderer.send('countdown-cancel'),
   restartTimer: () => ipcRenderer.send('countdown-restart'),
   shutdownNow: () => ipcRenderer.send('shutdown-now'),
