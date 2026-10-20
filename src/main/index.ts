@@ -2,7 +2,7 @@ import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage } from 'el
 import path from 'path';
 import { exec } from 'child_process';
 import { uIOhook } from 'uiohook-napi';
-import { hasAccount, getUsername, register, verify } from './auth';
+import { hasAccount, getUsername, getLockedUntil, register, verify } from './auth';
 import { loadStore, saveStore } from './store';
 
 let tray: Tray | null = null;
@@ -249,6 +249,7 @@ function sendStatus(status: string, remaining: number, progress = 0, idleSeconds
 ipcMain.handle('auth:status', () => ({
   registered: hasAccount(),
   username: getUsername(),
+  lockedUntil: getLockedUntil(),
 }));
 
 ipcMain.handle(
@@ -268,9 +269,9 @@ ipcMain.handle('timer:get', () => loadStore().timer);
 ipcMain.handle(
   'timer:update',
   (_e, { password, hours, minutes }: { password: string; hours: number; minutes: number }) => {
-    if (!hasAccount()) return { ok: false, error: 'No account registered.' };
     // Verify before mutating anything, so a bad password leaves the armed timer untouched.
-    if (!verify(password)) return { ok: false, error: 'Incorrect password.' };
+    const auth = verify(password);
+    if (!auth.ok) return auth;
     if (hours === 0 && minutes === 0) return { ok: false, error: 'Timer must be greater than zero.' };
 
     const store = loadStore();

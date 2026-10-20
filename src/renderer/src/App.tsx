@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import RegisterScreen from './RegisterScreen';
-import CredentialPrompt from './CredentialPrompt';
+import CredentialPrompt, { type ConfirmFailure } from './CredentialPrompt';
 
 type Status = 'inactive' | 'monitoring' | 'countdown';
 
@@ -32,6 +32,7 @@ export default function App(): React.JSX.Element {
   // null = still resolving; gates the whole UI on the main process's answer
   const [registered, setRegistered] = useState<boolean | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [promptLockedUntil, setPromptLockedUntil] = useState(0);
 
   useEffect(() => {
     api.onUpdateStatus(({ status: s, progress: p, idleSeconds: i }) => {
@@ -60,10 +61,19 @@ export default function App(): React.JSX.Element {
     setRegistered(true);
   };
 
-  /** Returns an error message to show in the prompt, or null once applied. */
-  const handleConfirmUpdate = async (password: string): Promise<string | null> => {
+  // Ask main for any active lockout first, so the prompt opens already locked.
+  const openPrompt = async (): Promise<void> => {
+    const { lockedUntil } = await api.getAuthStatus();
+    setPromptLockedUntil(lockedUntil);
+    setPromptOpen(true);
+  };
+
+  /** Returns a failure to show in the prompt, or null once applied. */
+  const handleConfirmUpdate = async (password: string): Promise<ConfirmFailure | null> => {
     const result = await api.updateTimer(password, hours, minutes);
-    if (!result.ok) return result.error ?? 'Update failed.';
+    if (!result.ok) {
+      return { error: result.error ?? 'Update failed.', lockedUntil: result.lockedUntil };
+    }
 
     setPromptOpen(false);
     setSaved(true);
@@ -152,7 +162,7 @@ export default function App(): React.JSX.Element {
 
         <button
           className="btn-update"
-          onClick={() => setPromptOpen(true)}
+          onClick={() => void openPrompt()}
           disabled={hours === 0 && minutes === 0}
         >
           {saved ? '✓ Applied' : 'Update Timer'}
@@ -164,6 +174,7 @@ export default function App(): React.JSX.Element {
           title="Confirm Timer Change"
           onConfirm={handleConfirmUpdate}
           onCancel={() => setPromptOpen(false)}
+          initialLockedUntil={promptLockedUntil}
         />
       )}
     </div>
