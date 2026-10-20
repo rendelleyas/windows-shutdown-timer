@@ -15,15 +15,29 @@ export interface TimerSettings {
   minutes: number;
 }
 
+/** Brute-force guard for password checks — persisted so a restart can't reset it. */
+export interface LockoutState {
+  /** Consecutive wrong passwords since the last success or lockout. */
+  failedAttempts: number;
+  /** Epoch ms until which every attempt is refused; 0 when not locked. */
+  lockedUntil: number;
+}
+
 export interface StoreData {
   account: Account | null;
   timer: TimerSettings;
+  lockout: LockoutState;
 }
 
 const DEFAULT_STORE: StoreData = {
   account: null,
   timer: { hours: 0, minutes: 5 },
+  lockout: { failedAttempts: 0, lockedUntil: 0 },
 };
+
+function toNonNegative(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
 
 function storePath(): string {
   return path.join(app.getPath('userData'), 'account.json');
@@ -45,9 +59,17 @@ export function loadStore(): StoreData {
         hours: parsed.timer?.hours ?? DEFAULT_STORE.timer.hours,
         minutes: parsed.timer?.minutes ?? DEFAULT_STORE.timer.minutes,
       },
+      lockout: {
+        failedAttempts: toNonNegative(parsed.lockout?.failedAttempts),
+        lockedUntil: toNonNegative(parsed.lockout?.lockedUntil),
+      },
     };
   } catch {
-    return { ...DEFAULT_STORE, timer: { ...DEFAULT_STORE.timer } };
+    return {
+      ...DEFAULT_STORE,
+      timer: { ...DEFAULT_STORE.timer },
+      lockout: { ...DEFAULT_STORE.lockout },
+    };
   }
 }
 

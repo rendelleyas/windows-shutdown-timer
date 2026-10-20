@@ -1,11 +1,15 @@
 interface AuthStatus {
   registered: boolean;
   username?: string;
+  /** Epoch ms the password lockout ends; 0 when not locked. */
+  lockedUntil: number;
 }
 
 interface ActionResult {
   ok: boolean;
   error?: string;
+  /** Present only when the action was refused because password entry is locked. */
+  lockedUntil?: number;
 }
 
 interface TimerSettings {
